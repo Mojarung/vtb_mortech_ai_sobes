@@ -1,0 +1,9 @@
+{
+  "interview_id": 3,
+  "candidate_name": "string",
+  "position": "string",
+  "start_time": "2025-09-07T12:27:01.764435",
+  "end_time": "2025-09-07T12:27:02.591526",
+  "duration_seconds": 0,
+  "messages": []
+}

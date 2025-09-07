@@ -1,554 +1,519 @@
-import React, { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
-import { 
-  Video, 
-  VideoOff, 
-  Mic, 
-  MicOff, 
-  Phone, 
-  PhoneOff,
-  MessageSquare,
+import {
+  Camera,
+  Mic,
+  MicOff,
+  VideoOff,
+  Phone,
+  Clock,
   Users,
-  MoreHorizontal,
-  Monitor,
-  Hand,
-  Link,
-  X,
-  Paperclip,
-  Smile,
-  Send
+  MessageCircle,
+  Volume2,
+  AlertTriangle,
+  Shield
 } from 'lucide-react'
-import WhisperClient from '../services/WhisperClient'
+// @ts-ignore
+import VideoSection from './VideoSection'
+// @ts-ignore
+import ChatSection from './ChatSection'
+// @ts-ignore
+import InterviewTimer from './InterviewTimer'
+import WhisperTranscription from './WhisperTranscription'
+import MediaPermissionHelper from './MediaPermissionHelper'
+import WhisperDebugLog from './WhisperDebugLog'
+import useWebSocket from '../hooks/useWebSocket'
+import { formatTime } from '../utils/time'
 
-interface Interview {
+interface InterviewData {
   id: number
-  unique_link: string
   candidate_name: string
   position: string
-  status: 'not_started' | 'started' | 'finished'
+  status: string
   started_at?: string
-  finished_at?: string
 }
 
-interface Message {
-  id: number
-  content: string
-  role: 'candidate' | 'ai_hr'
-  timestamp: string
-}
-
-const InterviewRoom: React.FC = () => {
+const InterviewRoom = () => {
   const { interviewId } = useParams<{ interviewId: string }>()
-  const [interview, setInterview] = useState<Interview | null>(null)
-  const [isVideoEnabled, setIsVideoEnabled] = useState(false)
-  const [isAudioEnabled, setIsAudioEnabled] = useState(false)
-  const [isInterviewActive, setIsInterviewActive] = useState(false)
-  const [, setStartTime] = useState<Date | null>(null)
-  // const [elapsed] = useState(0) // Не используется в новом дизайне
-  const [ws, setWs] = useState<WebSocket | null>(null)
-  const [messages, setMessages] = useState<Message[]>([])
-  const [newMessage, setNewMessage] = useState('')
-  const [stream, setStream] = useState<MediaStream | null>(null)
-  const [isChatOpen, setIsChatOpen] = useState(false)
+  const [interview, setInterview] = useState<InterviewData | null>(null)
+
+  console.log('🎤 [INTERVIEW] 🏠 Инициализация комнаты собеседования')
+  console.log('🎤 [INTERVIEW] ├─ ID интервью из URL:', interviewId)
+  console.log('🎤 [INTERVIEW] └─ Timestamp:', new Date().toISOString())
+  const [isVideoOn, setIsVideoOn] = useState(true)
+  const [isAudioOn, setIsAudioOn] = useState(true)
+  const [interviewStarted, setInterviewStarted] = useState(false)
+  const [startTime, setStartTime] = useState<Date | null>(null)
+  const [showChat, setShowChat] = useState(false)
+  const [showWhisper, setShowWhisper] = useState(false)
+  const [connectionError, setConnectionError] = useState<string | null>(null)
+  
   const videoRef = useRef<HTMLVideoElement>(null)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  const whisperClient = useRef<WhisperClient | null>(null)
-
-  // Таймер (отключен в новом дизайне)
-  // useEffect(() => {
-  //   let interval: number | null = null
-  //   if (isInterviewActive && startTime) {
-  //     interval = window.setInterval(() => {
-  //       const now = new Date()
-  //       const diff = Math.floor((now.getTime() - startTime.getTime()) / 1000)
-  //       // setElapsed(diff)
-  //     }, 1000)
-  //   }
-  //   return () => {
-  //     if (interval) clearInterval(interval)
-  //   }
-  // }, [isInterviewActive, startTime])
-
-  // Автоскролл чата
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  const streamRef = useRef<MediaStream | null>(null)
+  
+  // WebSocket подключение для чата
+  const { 
+    messages, 
+    sendMessage, 
+    connectionStatus, 
+    error: wsError 
+  } = useWebSocket(interview?.id || 0)
 
   // Загрузка данных интервью
   useEffect(() => {
-    const fetchInterview = async () => {
+    const loadInterview = async () => {
+      if (!interviewId) return
+      
       try {
-        const response = await fetch(`/api/v1/interviews/${interviewId}`)
+        const response = await fetch(`http://localhost:8000/api/v1/interviews/${interviewId}`)
         if (response.ok) {
           const data = await response.json()
           setInterview(data)
           
           if (data.status === 'started' && data.started_at) {
+            setInterviewStarted(true)
             setStartTime(new Date(data.started_at))
-            setIsInterviewActive(true)
           }
+        } else {
+          setConnectionError('Собеседование не найдено')
         }
       } catch (error) {
         console.error('Ошибка загрузки интервью:', error)
+        setConnectionError('Ошибка подключения к серверу')
       }
     }
-
-    if (interviewId) {
-      fetchInterview()
-    }
+    
+    loadInterview()
   }, [interviewId])
 
-  // WebSocket соединение для чата
-  useEffect(() => {
-    if (interview?.id) {
-      const websocket = new WebSocket(`ws://localhost:8000/api/v1/chat/${interview.id}/ws`)
+  // Инициализация камеры
+  const [mediaError, setMediaError] = useState<string | null>(null)
+  const [mediaPermissionDenied, setMediaPermissionDenied] = useState(false)
+  const [showPermissionHelper, setShowPermissionHelper] = useState(false)
+
+  const initCamera = async () => {
+    try {
+      setMediaError(null)
+      setMediaPermissionDenied(false)
       
-      websocket.onopen = () => {
-        setWs(websocket)
+      // Проверяем доступность MediaDevices API
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('MediaDevices API не поддерживается в этом браузере')
       }
-      
-      websocket.onmessage = (event) => {
-        const message = JSON.parse(event.data)
-        if (!message.error) {
-          setMessages(prev => [...prev, message])
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'user'
+        },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
         }
+      })
+      
+      streamRef.current = stream
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
       }
       
-      websocket.onclose = () => {
-        setWs(null)
+      console.log('Камера и микрофон успешно подключены')
+    } catch (error: any) {
+      console.error('Ошибка доступа к камере/микрофону:', error)
+      
+      let errorMessage = 'Неизвестная ошибка доступа к медиа устройствам'
+      let isDenied = false
+      
+      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+        errorMessage = 'Доступ к камере и микрофону заблокирован. Разрешите доступ в браузере.'
+        isDenied = true
+      } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+        errorMessage = 'Камера или микрофон не найдены. Проверьте подключение устройств.'
+      } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+        errorMessage = 'Устройства заняты другим приложением. Закройте другие программы, использующие камеру/микрофон.'
+      } else if (error.name === 'OverconstrainedError' || error.name === 'ConstraintNotSatisfiedError') {
+        errorMessage = 'Параметры камеры не поддерживаются устройством.'
+      } else if (error.name === 'NotSupportedError') {
+        errorMessage = 'HTTPS соединение требуется для доступа к камере в этом браузере.'
+      } else if (error.message) {
+        errorMessage = error.message
       }
-
-      return () => {
-        websocket.close()
-      }
+      
+      setMediaError(errorMessage)
+      setMediaPermissionDenied(isDenied)
     }
-  }, [interview?.id])
+  }
 
-  // Инициализация Whisper клиента
   useEffect(() => {
-    whisperClient.current = new WhisperClient('wss://mojarung-whisper-websocket-6dd5.twc1.net')
+    initCamera()
     
-    whisperClient.current.onTranscription = (text: string) => {
-      if (text && text.trim()) {
-        sendMessage(text.trim(), 'candidate')
-      }
-    }
-
     return () => {
-      whisperClient.current?.disconnect()
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop())
+      }
     }
   }, [])
 
-  // Функция formatTime закомментирована, так как не используется
-  // const formatTime = (seconds: number) => {
-  //   const hours = Math.floor(seconds / 3600)
-  //   const minutes = Math.floor((seconds % 3600) / 60)
-  //   const secs = seconds % 60
-  //   if (hours > 0) {
-  //     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
-  //   }
-  //   return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
-  // }
+  const toggleVideo = useCallback(() => {
+    if (streamRef.current) {
+      const videoTrack = streamRef.current.getVideoTracks()[0]
+      if (videoTrack) {
+        videoTrack.enabled = !videoTrack.enabled
+        setIsVideoOn(videoTrack.enabled)
+      }
+    }
+  }, [])
+
+  const toggleAudio = useCallback(() => {
+    if (streamRef.current) {
+      const audioTrack = streamRef.current.getAudioTracks()[0]
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled
+        setIsAudioOn(audioTrack.enabled)
+      }
+    }
+  }, [])
 
   const startInterview = async () => {
     if (!interview) return
+    
     try {
-      const response = await fetch(`/api/v1/interviews/${interview.id}/start`, {
+      const response = await fetch(`http://localhost:8000/api/v1/interviews/${interview.id}/start`, {
         method: 'PATCH'
       })
+      
       if (response.ok) {
-        setIsInterviewActive(true)
+        setInterviewStarted(true)
         setStartTime(new Date())
-        setTimeout(() => {
-          sendAIMessage(`Здравствуйте, ${interview.candidate_name}! Меня зовут AI HR, и сегодня я буду проводить с вами собеседование на позицию ${interview.position}. Готовы начать?`)
-        }, 1000)
       }
     } catch (error) {
-      console.error('Ошибка при начале интервью:', error)
+      console.error('Ошибка начала интервью:', error)
     }
   }
 
   const endInterview = async () => {
     if (!interview) return
+    
     try {
-      const response = await fetch(`/api/v1/interviews/${interview.id}/finish`, {
+      const response = await fetch(`http://localhost:8000/api/v1/interviews/${interview.id}/finish`, {
         method: 'PATCH'
       })
+      
       if (response.ok) {
-        setIsInterviewActive(false)
-        alert('Интервью завершено. Транскрипция сохранена.')
+        alert('Собеседование завершено. Транскрипция сохранена.')
       }
     } catch (error) {
-      console.error('Ошибка при завершении интервью:', error)
+      console.error('Ошибка завершения интервью:', error)
     }
   }
 
-  const toggleVideo = async () => {
-    if (!isVideoEnabled) {
-      try {
-        const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-        setStream(mediaStream)
-        if (videoRef.current) {
-          videoRef.current.srcObject = mediaStream
-        }
-        setIsVideoEnabled(true)
-      } catch (error) {
-        console.error('Ошибка доступа к камере:', error)
-      }
+  const handleWhisperTranscription = useCallback((text: string) => {
+    console.log('🎤 [INTERVIEW] 📝 Получена транскрипция для отправки в чат:')
+    console.log('🎤 [INTERVIEW] ├─ Текст:', `"${text}"`)
+    console.log('🎤 [INTERVIEW] ├─ Длина:', text.length)
+    console.log('🎤 [INTERVIEW] └─ После trim:', text.trim().length)
+    
+    // Автоматически отправляем транскрипцию в чат от кандидата
+    if (text.trim()) {
+      console.log('🎤 [INTERVIEW] ✅ ОТПРАВЛЯЕМ В ЧАТ ОТ КАНДИДАТА:', text)
+      sendMessage(text, 'candidate')
     } else {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop())
-        setStream(null)
-      }
-      if (videoRef.current) {
-        videoRef.current.srcObject = null
-      }
-      setIsVideoEnabled(false)
+      console.log('🎤 [INTERVIEW] ⚠️ Пустая транскрипция, не отправляем в чат')
     }
-  }
+  }, [sendMessage])
 
-  const toggleAudio = async () => {
-    if (!isAudioEnabled) {
-      const success = await whisperClient.current?.startRecording()
-      if (success) {
-        setIsAudioEnabled(true)
-      }
-    } else {
-      whisperClient.current?.stopRecording()
-      setIsAudioEnabled(false)
-    }
-  }
-
-  const sendMessage = (content: string, role: 'candidate' | 'ai_hr') => {
-    if (ws && content.trim()) {
-      const messageData = {
-        content: content.trim(),
-        role
-      }
-      ws.send(JSON.stringify(messageData))
-      setNewMessage('')
-    }
-  }
-
-  const sendAIMessage = async (content: string) => {
-    if (!interview) return
-    try {
-      await fetch(`/api/v1/chat/${interview.id}/ai-message`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ message: content }),
-      })
-    } catch (error) {
-      console.error('Ошибка отправки AI сообщения:', error)
-    }
-  }
-
-  const handleSendMessage = () => {
-    if (newMessage.trim()) {
-      sendMessage(newMessage, 'candidate')
-    }
-  }
-
-  if (!interview) {
+  if (connectionError) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-purple-500 mx-auto mb-4"></div>
-          <p className="text-xl text-white">Загрузка интервью...</p>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="card max-w-md text-center">
+          <h2 className="text-2xl font-bold text-red-400 mb-4">Ошибка</h2>
+          <p className="text-text-muted">{connectionError}</p>
         </div>
       </div>
     )
   }
 
-  return (
-    <div 
-      className="flex flex-col h-screen w-screen"
-      style={{ backgroundColor: 'var(--color-background)' }}
-    >
-      {/* Основной контент */}
-      <div className="flex-grow flex">
-        {/* Главная область */}
-        <div 
-          className={`flex-grow flex ${isChatOpen ? 'flex-col' : 'flex-row'} justify-center items-center gap-3 p-4`}
-          style={{ 
-            flexDirection: isChatOpen ? 'column' : 'row' 
-          }}
-        >
-          {/* Участник 1 - Кандидат */}
-          <div 
-            className="relative flex flex-col justify-center items-center"
-            style={{
-              width: '450px',
-              height: '300px',
-              backgroundColor: 'var(--color-surface)',
-              borderRadius: '8px'
-            }}
-          >
-            {isVideoEnabled ? (
-              <video
-                ref={videoRef}
-                autoPlay
-                muted
-                className="w-full h-full object-cover rounded-lg"
-              />
-            ) : (
-              <>
-                <img
-                  src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&h=120&fit=crop&crop=face"
-                  alt="Candidate Avatar"
-                  className="w-30 h-30 rounded-full"
-                  style={{ width: '120px', height: '120px' }}
-                />
-              </>
-            )}
-            
-            {/* Имя участника */}
-            <div 
-              className="absolute flex items-center gap-2"
-              style={{
-                bottom: '15px',
-                left: '15px'
-              }}
-            >
-              <span 
-                className="font-medium"
-                style={{
-                  color: 'var(--color-primary-text)',
-                  fontSize: '14px',
-                  fontWeight: '500'
-                }}
-              >
-                {interview?.candidate_name || 'Кандидат'}
-              </span>
-              {!isAudioEnabled && (
-                <MicOff 
-                  size={16} 
-                  style={{ color: 'var(--color-primary-text)' }} 
-                />
-              )}
+  // Показ ошибки доступа к медиа устройствам
+  if (mediaError && !interview) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="card max-w-2xl">
+          <div className="text-center mb-6">
+            <div className="w-16 h-16 bg-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Camera className="w-8 h-8 text-white" />
             </div>
+            <h2 className="text-2xl font-bold text-red-400 mb-2">Проблема с медиа устройствами</h2>
+            <p className="text-text-muted text-lg">{mediaError}</p>
           </div>
 
-          {/* Участник 2 - AI HR */}
-          <div 
-            className="relative flex flex-col justify-center items-center"
-            style={{
-              width: '450px',
-              height: '300px',
-              backgroundColor: 'var(--color-surface)',
-              borderRadius: '8px'
-            }}
-          >
-            <img
-              src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&h=120&fit=crop&crop=face"
-              alt="AI HR Avatar"
-              className="w-30 h-30 rounded-full"
-              style={{ width: '120px', height: '120px' }}
-            />
-            
-            {/* Имя участника */}
-            <div 
-              className="absolute flex items-center gap-2"
-              style={{
-                bottom: '15px',
-                left: '15px'
-              }}
-            >
-              <span 
-                className="font-medium"
-                style={{
-                  color: 'var(--color-primary-text)',
-                  fontSize: '14px',
-                  fontWeight: '500'
-                }}
-              >
-                AI HR
-              </span>
-              <MicOff 
-                size={16} 
-                style={{ color: 'var(--color-primary-text)' }} 
-              />
+          {mediaPermissionDenied && (
+            <div className="bg-yellow-900/20 border border-yellow-500/30 rounded-xl p-4 mb-6">
+              <h3 className="text-yellow-400 font-medium mb-2">🔧 Как разрешить доступ:</h3>
+              <ol className="text-sm text-yellow-200 space-y-2 list-decimal list-inside">
+                <li>Нажмите на иконку замка/камеры в адресной строке браузера</li>
+                <li>Выберите "Разрешить" для камеры и микрофона</li>
+                <li>Обновите страницу или нажмите "Повторить попытку"</li>
+              </ol>
             </div>
+          )}
+
+          <div className="bg-blue-900/20 border border-blue-500/30 rounded-xl p-4 mb-6">
+            <h3 className="text-blue-400 font-medium mb-2">💡 Возможные решения:</h3>
+            <ul className="text-sm text-blue-200 space-y-1 list-disc list-inside">
+              <li>Перезагрузите страницу (Ctrl+F5 или Cmd+Shift+R)</li>
+              <li>Закройте другие приложения, использующие камеру (Zoom, Teams, Skype)</li>
+              <li>Проверьте физическое подключение веб-камеры</li>
+              <li>Попробуйте другой браузер (Chrome рекомендуется)</li>
+              <li>Убедитесь, что сайт открыт по HTTPS (для некоторых браузеров)</li>
+            </ul>
+          </div>
+
+          <div className="flex space-x-3">
+            <button
+              onClick={initCamera}
+              className="btn-primary flex-1 flex items-center justify-center space-x-2"
+            >
+              <Camera className="w-4 h-4" />
+              <span>Повторить попытку</span>
+            </button>
+            <button
+              onClick={() => setShowPermissionHelper(true)}
+              className="btn-secondary flex items-center space-x-2"
+            >
+              <Shield className="w-4 h-4" />
+              <span>Справка</span>
+            </button>
+            <button
+              onClick={() => {
+                setMediaError(null)
+                // Продолжаем без камеры
+              }}
+              className="btn-secondary flex-1"
+            >
+              Продолжить без камеры
+            </button>
           </div>
         </div>
+      </div>
+    )
+  }
 
-        {/* Боковая панель чата */}
-        {isChatOpen && (
-          <div 
-            className="flex flex-col border-l"
-            style={{
-              width: '360px',
-              height: 'calc(100% - 70px)',
-              backgroundColor: 'var(--color-chat-background)',
-              borderLeftColor: 'var(--color-surface)'
-            }}
-          >
-            {/* Заголовок чата */}
-            <div className="p-2.5 text-right">
+  if (!interview) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-500"></div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="h-screen bg-background flex flex-col overflow-hidden">
+      {/* Заголовок */}
+      <header className="bg-background-secondary border-b border-white/10 p-4 flex items-center justify-between">
+        <div className="flex items-center space-x-4">
+          <div>
+            <h1 className="text-xl font-semibold text-white">Собеседование</h1>
+            <p className="text-text-muted text-sm">
+              {interview.candidate_name} • {interview.position}
+            </p>
+          </div>
+          
+          {/* Уведомление об ошибке медиа */}
+          {mediaError && (
+            <div className="bg-red-900/20 border border-red-500/30 rounded-lg px-3 py-2 flex items-center space-x-2">
+              <AlertTriangle className="w-4 h-4 text-red-400" />
+              <span className="text-red-200 text-sm">Проблема с камерой/микрофоном</span>
               <button
-                onClick={() => setIsChatOpen(false)}
-                className="p-1 hover:bg-gray-600 rounded"
+                onClick={() => setShowPermissionHelper(true)}
+                className="text-red-400 hover:text-red-300 underline text-sm"
               >
-                <X size={16} style={{ color: 'var(--color-icon-default)' }} />
+                Справка
+              </button>
+              <button
+                onClick={initCamera}
+                className="text-red-400 hover:text-red-300 underline text-sm ml-2"
+              >
+                Повторить
               </button>
             </div>
+          )}
+        </div>
+        
+        <div className="flex items-center space-x-6">
+          {/* Таймер */}
+          <div className="flex items-center space-x-2 text-text-muted">
+            <Clock className="w-4 h-4" />
+            <InterviewTimer 
+              startTime={startTime}
+              isRunning={interviewStarted}
+            />
+          </div>
+          
+          {/* Статус подключения */}
+          <div className="flex items-center space-x-2">
+            <div className={`w-2 h-2 rounded-full ${
+              connectionStatus === 'connected' ? 'bg-green-500' : 
+              connectionStatus === 'connecting' ? 'bg-yellow-500' : 
+              'bg-red-500'
+            }`}></div>
+            <span className="text-xs text-text-muted">
+              {connectionStatus === 'connected' ? 'Подключено' : 
+               connectionStatus === 'connecting' ? 'Подключение...' : 
+               'Отключено'}
+            </span>
+          </div>
 
-            {/* Область сообщений */}
-            <div className="flex-grow flex justify-center items-center">
-              <div 
-                className="text-center"
-                style={{
-                  color: 'var(--color-secondary-text)',
-                  fontSize: '13px',
-                  whiteSpace: 'pre-wrap'
-                }}
-              >
-                Сегодня{'\n'}Чат сохранится в Яндекс.Мессенджере, если вы авторизованы на Яндексе.
-              </div>
-            </div>
+          {/* Кнопка чата */}
+          <button
+            onClick={() => setShowChat(!showChat)}
+            className={`p-2 rounded-xl transition-all ${
+              showChat 
+                ? 'bg-primary-600 text-white' 
+                : 'bg-background-tertiary text-text-muted hover:text-white hover:bg-background-tertiary/80'
+            }`}
+          >
+            <MessageCircle className="w-5 h-5" />
+          </button>
 
-            {/* Область ввода */}
-            <div 
-              className="p-4 flex items-center gap-2.5"
-              style={{ backgroundColor: 'var(--color-chat-input-bg)' }}
-            >
-              <input
-                type="text"
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                placeholder="Сообщение..."
-                className="flex-1 bg-transparent border-none outline-none"
-                style={{ 
-                  color: 'var(--color-primary-text)',
-                  fontSize: '13px'
-                }}
+          {/* Кнопка Whisper */}
+          <button
+            onClick={() => setShowWhisper(!showWhisper)}
+            className={`p-2 rounded-xl transition-all ${
+              showWhisper 
+                ? 'bg-green-600 text-white' 
+                : 'bg-background-tertiary text-text-muted hover:text-white hover:bg-background-tertiary/80'
+            }`}
+            title="Whisper Транскрипция"
+          >
+            <Volume2 className="w-5 h-5" />
+          </button>
+        </div>
+      </header>
+
+      {/* Основной контент */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Видео секция */}
+        <div className={`${
+          showChat && showWhisper ? 'w-1/2' :
+          showChat || showWhisper ? 'w-2/3' : 
+          'w-full'
+        } transition-all duration-300`}>
+          <VideoSection
+            videoRef={videoRef}
+            isVideoOn={isVideoOn}
+            isAudioOn={isAudioOn}
+            interviewStarted={interviewStarted}
+            mediaError={mediaError}
+            onRetryCamera={initCamera}
+          />
+        </div>
+
+        {/* Чат секция */}
+        {showChat && (
+          <div className={`${
+            showWhisper ? 'w-1/4' : 'w-1/3'
+          } border-l border-white/10 bg-background-secondary transition-all duration-300`}>
+            <ChatSection
+              messages={messages}
+              onSendMessage={sendMessage}
+              interviewId={interview.id}
+            />
+          </div>
+        )}
+
+        {/* Whisper секция */}
+        {showWhisper && (
+          <div className={`${
+            showChat ? 'w-1/4' : 'w-1/3'
+          } border-l border-white/10 bg-background transition-all duration-300 overflow-y-auto`}>
+            <div className="p-4">
+              <WhisperTranscription
+                onTranscription={handleWhisperTranscription}
+                className="h-full"
               />
-              <button className="p-1 hover:bg-gray-600 rounded">
-                <Paperclip size={16} style={{ color: 'var(--color-icon-default)' }} />
-              </button>
-              <button className="p-1 hover:bg-gray-600 rounded">
-                <Smile size={16} style={{ color: 'var(--color-icon-default)' }} />
-              </button>
-              <button 
-                onClick={handleSendMessage}
-                disabled={!newMessage.trim()}
-                className="p-1 hover:bg-gray-600 rounded disabled:opacity-50"
-              >
-                <Send size={16} style={{ color: 'var(--color-icon-default)' }} />
-              </button>
             </div>
           </div>
         )}
       </div>
 
       {/* Панель управления */}
-      <div 
-        className="flex justify-between items-center p-4"
-        style={{ height: '70px' }}
-      >
-        {/* Левые контролы */}
-        <div className="flex items-center gap-3">
-          <button 
-            className="p-3 rounded-full hover:bg-gray-600 transition-colors"
-            style={{ backgroundColor: 'var(--color-button-pill-bg)' }}
-          >
-            <Link size={16} style={{ color: 'var(--color-icon-default)' }} />
-          </button>
-          <button 
-            onClick={toggleAudio}
-            className="p-3 rounded-full hover:bg-gray-600 transition-colors"
-            style={{ 
-              backgroundColor: isAudioEnabled ? 'var(--color-button-pill-bg)' : 'var(--color-destructive)' 
-            }}
-          >
-            {isAudioEnabled ? (
-              <Mic size={16} style={{ color: 'var(--color-icon-default)' }} />
-            ) : (
-              <MicOff size={16} style={{ color: 'var(--color-icon-default)' }} />
-            )}
-          </button>
-          <button 
-            onClick={toggleVideo}
-            className="p-3 rounded-full hover:bg-gray-600 transition-colors"
-            style={{ 
-              backgroundColor: isVideoEnabled ? 'var(--color-button-pill-bg)' : 'var(--color-destructive)' 
-            }}
-          >
-            {isVideoEnabled ? (
-              <Video size={16} style={{ color: 'var(--color-icon-default)' }} />
-            ) : (
-              <VideoOff size={16} style={{ color: 'var(--color-icon-default)' }} />
-            )}
-          </button>
-        </div>
-
-        {/* Центральные контролы */}
-        <div className="flex items-center gap-3">
-          <button 
-            className="p-3 rounded-full hover:bg-gray-600 transition-colors"
-            style={{ backgroundColor: 'var(--color-button-pill-bg)' }}
-          >
-            <Hand size={16} style={{ color: 'var(--color-icon-default)' }} />
-          </button>
-          <button 
-            className="p-3 rounded-full hover:bg-gray-600 transition-colors"
-            style={{ backgroundColor: 'var(--color-button-pill-bg)' }}
-          >
-            <Monitor size={16} style={{ color: 'var(--color-icon-default)' }} />
-          </button>
-          <button 
-            className="p-3 rounded-full hover:bg-gray-600 transition-colors"
-            style={{ backgroundColor: 'var(--color-button-pill-bg)' }}
-          >
-            <Users size={16} style={{ color: 'var(--color-icon-default)' }} />
-          </button>
-          <button 
-            onClick={() => setIsChatOpen(!isChatOpen)}
-            className="p-3 rounded-full hover:bg-gray-600 transition-colors"
-            style={{ backgroundColor: 'var(--color-button-pill-bg)' }}
-          >
-            <MessageSquare size={16} style={{ color: 'var(--color-icon-default)' }} />
-          </button>
-          <button 
-            className="p-3 rounded-full hover:bg-gray-600 transition-colors"
-            style={{ backgroundColor: 'var(--color-button-pill-bg)' }}
-          >
-            <MoreHorizontal size={16} style={{ color: 'var(--color-icon-default)' }} />
-          </button>
-        </div>
-
-        {/* Правые контролы */}
-        <div className="flex items-center">
-          {!isInterviewActive ? (
+      <footer className="bg-background-secondary border-t border-white/10 p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2">
+              <Users className="w-4 h-4 text-text-muted" />
+              <span className="text-sm text-text-muted">2 участника</span>
+            </div>
+            
+            {/* Статус медиа устройств */}
+            <div className="flex items-center space-x-2 text-xs">
+              <div className={`flex items-center space-x-1 px-2 py-1 rounded ${
+                mediaError 
+                  ? 'bg-red-900/30 text-red-300' 
+                  : 'bg-green-900/30 text-green-300'
+              }`}>
+                <Camera className="w-3 h-3" />
+                <span>{mediaError ? 'Ошибка' : 'ОК'}</span>
+              </div>
+            </div>
+          </div>
+          
+          <div className="flex items-center space-x-3">
+            {/* Кнопки управления медиа */}
             <button
-              onClick={startInterview}
-              className="px-6 py-3 rounded-full font-medium transition-colors"
-              style={{ 
-                backgroundColor: 'var(--color-success)',
-                color: 'var(--color-icon-default)'
-              }}
+              onClick={toggleVideo}
+              className={`p-3 rounded-xl transition-all ${
+                isVideoOn 
+                  ? 'bg-background-tertiary text-white hover:bg-white/10' 
+                  : 'bg-red-600 text-white hover:bg-red-700'
+              }`}
             >
-              <Phone size={16} className="inline mr-2" />
-              Начать интервью
+              {isVideoOn ? <Camera className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
             </button>
-          ) : (
+            
             <button
-              onClick={endInterview}
-              className="px-6 py-3 rounded-full font-medium transition-colors"
-              style={{ 
-                backgroundColor: 'var(--color-destructive)',
-                color: 'var(--color-icon-default)'
-              }}
+              onClick={toggleAudio}
+              className={`p-3 rounded-xl transition-all ${
+                isAudioOn 
+                  ? 'bg-background-tertiary text-white hover:bg-white/10' 
+                  : 'bg-red-600 text-white hover:bg-red-700'
+              }`}
             >
-              <PhoneOff size={16} className="inline mr-2" />
-              Завершить
+              {isAudioOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
             </button>
-          )}
+          </div>
+          
+          <div className="flex items-center space-x-3">
+            {!interviewStarted ? (
+              <button
+                onClick={startInterview}
+                className="btn-primary"
+              >
+                Начать собеседование
+              </button>
+            ) : (
+              <button
+                onClick={endInterview}
+                className="btn-danger flex items-center space-x-2"
+              >
+                <Phone className="w-4 h-4" />
+                <span>Завершить</span>
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      </footer>
+
+      {/* Хелпер для разрешений медиа устройств */}
+      <MediaPermissionHelper
+        show={showPermissionHelper}
+        onClose={() => setShowPermissionHelper(false)}
+      />
+
+      {/* Дебаг лог Whisper */}
+      <WhisperDebugLog />
     </div>
   )
 }
