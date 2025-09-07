@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { WHISPER_WS_URL } from '../config'
 
 interface TranscriptionResult {
   text: string
@@ -20,7 +21,7 @@ interface UseWhisperWebSocketReturn {
   error: string | null
 }
 
-const useWhisperWebSocket = (serverUrl: string = 'wss://mojarung-whisper-websocket-6dd5.twc1.net'): UseWhisperWebSocketReturn => {
+const useWhisperWebSocket = (serverUrl: string = WHISPER_WS_URL): UseWhisperWebSocketReturn => {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected')
   const [isRecording, setIsRecording] = useState(false)
   const [transcriptions, setTranscriptions] = useState<TranscriptionResult[]>([])
@@ -56,12 +57,6 @@ const useWhisperWebSocket = (serverUrl: string = 'wss://mojarung-whisper-websock
 
       wsRef.current = new WebSocket(serverUrl)
 
-      wsRef.current.onopen = () => {
-        setConnectionStatus('connected')
-        console.log('🎤 [WHISPER] WebSocket соединение установлено')
-        console.log('🎤 [WHISPER] Сервер:', serverUrl)
-      }
-
       wsRef.current.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
@@ -71,7 +66,6 @@ const useWhisperWebSocket = (serverUrl: string = 'wss://mojarung-whisper-websock
             case 'connection_established':
               clientIdRef.current = data.client_id
               console.log(`🎤 [WHISPER] ✅ Подключен как клиент: ${data.client_id}`)
-              console.log(`🎤 [WHISPER] Готов к приему аудио`)
               break
               
             case 'transcription':
@@ -86,7 +80,6 @@ const useWhisperWebSocket = (serverUrl: string = 'wss://mojarung-whisper-websock
                   timestamp: data.timestamp,
                   client_id: data.client_id
                 }
-                console.log('🎤 [WHISPER] 💾 Сохранена транскрипция, всего:', prev.length + 1)
                 return [newTranscription, ...prev]
               })
               break
@@ -94,21 +87,21 @@ const useWhisperWebSocket = (serverUrl: string = 'wss://mojarung-whisper-websock
             case 'error':
               setError(data.message)
               console.error('🎤 [WHISPER] ❌ ОШИБКА СЕРВЕРА:', data.message)
-              console.error('🎤 [WHISPER] Полные данные ошибки:', data)
               break
               
             case 'pong':
-              console.log('🎤 [WHISPER] 🏓 Получен pong от сервера - соединение активно')
+              console.log('🎤 [WHISPER] 🏓 Получен pong от сервера')
               break
-              
-            default:
-              console.log('🎤 [WHISPER] ❓ Неизвестный тип сообщения:', data.type)
-              console.log('🎤 [WHISPER] Данные:', data)
           }
         } catch (err) {
-          console.error('🎤 [WHISPER] ❌ Ошибка парсинга JSON:', err)
-          console.error('🎤 [WHISPER] Исходные данные:', event.data)
+          console.error('🎤 [WHISPER] ❌ Ошибка парсинга сообщения:', err)
         }
+      }
+
+      wsRef.current.onopen = () => {
+        setConnectionStatus('connected')
+        console.log('🎤 [WHISPER] 🔗 WebSocket соединение установлено')
+        console.log('🎤 [WHISPER] 📍 Сервер:', serverUrl)
       }
 
       wsRef.current.onclose = (event) => {
@@ -152,15 +145,10 @@ const useWhisperWebSocket = (serverUrl: string = 'wss://mojarung-whisper-websock
   const sendAudioForTranscription = useCallback(async (audioBlob: Blob) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       console.warn('🎤 [WHISPER] ⚠️ WebSocket не подключен, пропускаем отправку аудио')
-      console.warn('🎤 [WHISPER] Статус соединения:', wsRef.current?.readyState)
       return
     }
 
     try {
-      console.log('🎤 [WHISPER] 📦 Подготовка аудио для отправки...')
-      console.log('🎤 [WHISPER] ├─ Размер файла:', audioBlob.size, 'байт')
-      console.log('🎤 [WHISPER] ├─ Тип:', audioBlob.type)
-      
       // Проверяем размер
       if (audioBlob.size === 0) {
         console.warn('🎤 [WHISPER] ⚠️ Пустой аудио файл, пропускаем')
@@ -173,9 +161,6 @@ const useWhisperWebSocket = (serverUrl: string = 'wss://mojarung-whisper-websock
       }
 
       // Конвертируем в base64
-      console.log('🎤 [WHISPER] 🔄 Конвертация в base64...')
-      const startTime = performance.now()
-      
       const base64Audio = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader()
         reader.onloadend = () => {
@@ -186,28 +171,17 @@ const useWhisperWebSocket = (serverUrl: string = 'wss://mojarung-whisper-websock
         reader.onerror = reject
         reader.readAsDataURL(audioBlob)
       })
-      
-      const conversionTime = performance.now() - startTime
-      console.log('🎤 [WHISPER] ✅ Base64 конвертация завершена за', conversionTime.toFixed(1), 'мс')
-      console.log('🎤 [WHISPER] ├─ Размер base64:', base64Audio.length, 'символов')
 
       const message = {
         type: 'audio',
         audio_data: base64Audio
       }
 
-      console.log('🎤 [WHISPER] 📤 Отправка аудио на сервер...')
       wsRef.current.send(JSON.stringify(message))
-      console.log('🎤 [WHISPER] ✅ Аудио успешно отправлено на Whisper сервер')
-      console.log('🎤 [WHISPER] ├─ Исходный размер:', audioBlob.size, 'байт')
-      console.log('🎤 [WHISPER] └─ Размер JSON:', JSON.stringify(message).length, 'символов')
+      console.log(`🎤 [WHISPER] 📤 Аудио отправлено на сервер (размер: ${audioBlob.size} байт)`)
 
     } catch (error) {
       console.error('🎤 [WHISPER] ❌ Ошибка при отправке аудио:', error)
-      console.error('🎤 [WHISPER] Детали blob:', {
-        size: audioBlob.size,
-        type: audioBlob.type
-      })
       setError('Ошибка при отправке аудио для транскрипции')
     }
   }, [])
