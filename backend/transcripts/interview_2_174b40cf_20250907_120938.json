@@ -1,0 +1,30 @@
+{
+  "interview_info": {
+    "id": 2,
+    "unique_link": "174b40cf-d88a-45a1-bbcb-78c09e13a5aa",
+    "candidate_name": "ПАПИА",
+    "candidate_email": "1@mail.ru",
+    "position": "ПАПАПАП",
+    "recommended_duration_minutes": 30,
+    "actual_duration_seconds": 61,
+    "status": "finished",
+    "created_at": "2025-09-07T09:08:32.685172",
+    "started_at": "2025-09-07T09:08:36.894557",
+    "finished_at": "2025-09-07T09:09:38.707905",
+    "knowledge_base": "АПАП",
+    "description": "АПАПАП"
+  },
+  "conversation": [
+    {
+      "id": 2,
+      "role": "ai_hr",
+      "content": "Добро пожаловать на собеседование, ПАПИА! Меня зовут AI HR, и я проведу с вами интервью на позицию ПАПАПАП. Давайте начнем с краткого рассказа о себе.",
+      "timestamp": "2025-09-07T09:08:38.993362"
+    }
+  ],
+  "metadata": {
+    "total_messages": 1,
+    "transcript_created_at": "2025-09-07T12:09:38.713982",
+    "file_version": "1.0"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "interview_info": {
+    "id": 3,
+    "unique_link": "632c3662-908b-440a-ac64-370b4c032b43",
+    "candidate_name": " sd",
+    "candidate_email": "s@mail.ru",
+    "position": "dsdsd",
+    "recommended_duration_minutes": 30,
+    "actual_duration_seconds": 100,
+    "status": "finished",
+    "created_at": "2025-09-07T09:10:16.401205",
+    "started_at": "2025-09-07T09:10:25.585812",
+    "finished_at": "2025-09-07T09:12:06.020191",
+    "knowledge_base": "sdsd",
+    "description": "dsds"
+  },
+  "conversation": [
+    {
+      "id": 3,
+      "role": "ai_hr",
+      "content": "Добро пожаловать на собеседование,  sd! Меня зовут AI HR, и я проведу с вами интервью на позицию dsdsd. Давайте начнем с краткого рассказа о себе.",
+      "timestamp": "2025-09-07T09:10:27.700053"
+    }
+  ],
+  "metadata": {
+    "total_messages": 1,
+    "transcript_created_at": "2025-09-07T12:12:06.026197",
+    "file_version": "1.0"
+  }
+}

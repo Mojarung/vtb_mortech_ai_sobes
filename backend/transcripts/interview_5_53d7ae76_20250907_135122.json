@@ -1,0 +1,15 @@
+{
+  "interview_id": 5,
+  "candidate_name": "ass",
+  "position": "awa",
+  "start_time": "2025-09-07T10:51:16.838749",
+  "end_time": "2025-09-07T10:51:22.116296",
+  "duration_seconds": 5,
+  "messages": [
+    {
+      "role": "ai_hr",
+      "content": "Здравствуйте, ass! Меня зовут AI HR, и сегодня я буду проводить с вами собеседование на позицию awa. Готовы начать?",
+      "timestamp": "2025-09-07T10:51:17.860453"
+    }
+  ]
+}

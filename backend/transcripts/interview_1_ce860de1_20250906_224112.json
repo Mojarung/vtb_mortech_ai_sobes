@@ -1,0 +1,30 @@
+{
+  "interview_info": {
+    "id": 1,
+    "unique_link": "ce860de1-2f8b-4f0e-8adf-42b25ce97a67",
+    "candidate_name": "Еблан",
+    "candidate_email": "eblan@mail.ru",
+    "position": "backend",
+    "recommended_duration_minutes": 30,
+    "actual_duration_seconds": 31,
+    "status": "finished",
+    "created_at": "2025-09-06T19:40:36.579418",
+    "started_at": "2025-09-06T19:40:41.174927",
+    "finished_at": "2025-09-06T19:41:12.286775",
+    "knowledge_base": null,
+    "description": null
+  },
+  "conversation": [
+    {
+      "id": 1,
+      "role": "ai_hr",
+      "content": "Добро пожаловать на собеседование, Еблан! Меня зовут AI HR, и я проведу с вами интервью на позицию backend. Давайте начнем с краткого рассказа о себе.",
+      "timestamp": "2025-09-06T19:40:43.243975"
+    }
+  ],
+  "metadata": {
+    "total_messages": 1,
+    "transcript_created_at": "2025-09-06T22:41:12.292775",
+    "file_version": "1.0"
+  }
+}

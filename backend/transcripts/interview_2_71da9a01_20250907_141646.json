@@ -1,0 +1,25 @@
+{
+  "interview_id": 2,
+  "candidate_name": "string",
+  "position": "string",
+  "start_time": "2025-09-07T11:16:44.918835",
+  "end_time": "2025-09-07T11:16:45.994418",
+  "duration_seconds": 1,
+  "messages": [
+    {
+      "role": "candidate",
+      "content": "аууаауау",
+      "timestamp": "2025-09-07T11:16:40.657795"
+    },
+    {
+      "role": "candidate",
+      "content": "ауауауауа",
+      "timestamp": "2025-09-07T11:16:42.595714"
+    },
+    {
+      "role": "ai_hr",
+      "content": "Здравствуйте, string! Меня зовут AI HR, и сегодня я буду проводить с вами собеседование на позицию string. Готовы начать?",
+      "timestamp": "2025-09-07T11:16:45.952837"
+    }
+  ]
+}
