@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   Camera,
@@ -21,13 +21,12 @@ import {
   usePipecatClient,
   PipecatClientVideo,
   PipecatClientProvider,
-  PipecatClientAudio,
-  PipecatClientCamToggle,
-  PipecatClientMicToggle,
+  PipecatClientAudio, // Добавь это!
 } from '@pipecat-ai/client-react';
 import { PipecatClient } from '@pipecat-ai/client-js';
 import { SmallWebRTCTransport } from '@pipecat-ai/small-webrtc-transport';
 
+// Исправленный URL - убери /api/offer
 const PIPECAT_BACKEND_URL = 'http://0.0.0.0:7860/api/offer';
 
 interface InterviewData {
@@ -41,20 +40,26 @@ interface InterviewData {
 const InterviewRoomInternal = () => {
   const { interviewId } = useParams<{ interviewId: string }>();
   const [interview, setInterview] = useState<InterviewData | null>(null);
-  
+
+  const [isVideoOn, setIsVideoOn] = useState(true);
+  const [isAudioOn, setIsAudioOn] = useState(true);
   const [interviewStarted, setInterviewStarted] = useState(false);
   const [startTime, setStartTime] = useState<Date | null>(null);
   const [showChat, setShowChat] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
-  
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
   const { messages, sendMessage, connectionStatus } = useWebSocket(
     interview?.id || 0
   );
 
   const client = usePipecatClient();
 
+  // Исправленная функция подключения
   const handleConnect = useCallback(async () => {
     if (!client || isConnecting || isConnected) {
       return;
@@ -64,8 +69,9 @@ const InterviewRoomInternal = () => {
       setIsConnecting(true);
       setConnectionError(null);
 
+      // Правильный способ подключения к SmallWebRTC
       await client.connect({
-        webrtcUrl: "http://localhost:7860/api/offer",
+        webrtcUrl: PIPECAT_BACKEND_URL,
       });
 
       setIsConnected(true);
@@ -89,12 +95,14 @@ const InterviewRoomInternal = () => {
     }
   }, [client, isConnected]);
 
+  // Отключение при размонтировании компонента
   useEffect(() => {
     return () => {
       handleDisconnect();
     };
   }, [handleDisconnect]);
 
+  // Остальной код без изменений...
   useEffect(() => {
     const loadInterview = async () => {
       if (!interviewId) return;
@@ -123,8 +131,110 @@ const InterviewRoomInternal = () => {
     loadInterview();
   }, [interviewId]);
 
-  // Убираем всю логику с mediaError, поскольку Pipecat сам управляет медиа
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [mediaPermissionDenied, setMediaPermissionDenied] = useState(false);
   const [showPermissionHelper, setShowPermissionHelper] = useState(false);
+
+  // Остальные функции без изменений...
+  const initCamera = async () => {
+    try {
+      setMediaError(null);
+      setMediaPermissionDenied(false);
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('MediaDevices API не поддерживается в этом браузере');
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'user',
+        },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+
+      console.log('Камера и микрофон успешно подключены');
+    } catch (error: any) {
+      console.error('Ошибка доступа к камере/микрофону:', error);
+
+      let errorMessage = 'Неизвестная ошибка доступа к медиа устройствам';
+      let isDenied = false;
+
+      if (
+        error.name === 'NotAllowedError' ||
+        error.name === 'PermissionDeniedError'
+      ) {
+        errorMessage =
+          'Доступ к камере и микрофону заблокирован. Разрешите доступ в браузере.';
+        isDenied = true;
+      } else if (
+        error.name === 'NotFoundError' ||
+        error.name === 'DevicesNotFoundError'
+      ) {
+        errorMessage =
+          'Камера или микрофон не найдены. Проверьте подключение устройств.';
+      } else if (
+        error.name === 'NotReadableError' ||
+        error.name === 'TrackStartError'
+      ) {
+        errorMessage =
+          'Устройства заняты другим приложением. Закройте другие программы, использующие камеру/микрофон.';
+      } else if (
+        error.name === 'OverconstrainedError' ||
+        error.name === 'ConstraintNotSatisfiedError'
+      ) {
+        errorMessage = 'Параметры камеры не поддерживаются устройством.';
+      } else if (error.name === 'NotSupportedError') {
+        errorMessage =
+          'HTTPS соединение требуется для доступа к камере в этом браузере.';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      setMediaError(errorMessage);
+      setMediaPermissionDenied(isDenied);
+    }
+  };
+
+  useEffect(() => {
+    initCamera();
+
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, []);
+
+  const toggleVideo = useCallback(() => {
+    if (streamRef.current) {
+      const videoTrack = streamRef.current.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.enabled = !videoTrack.enabled;
+        setIsVideoOn(videoTrack.enabled);
+      }
+    }
+  }, []);
+
+  const toggleAudio = useCallback(() => {
+    if (streamRef.current) {
+      const audioTrack = streamRef.current.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+        setIsAudioOn(audioTrack.enabled);
+      }
+    }
+  }, []);
 
   const startInterview = async () => {
     if (!interview) return;
@@ -167,6 +277,7 @@ const InterviewRoomInternal = () => {
     }
   };
 
+  // Остальной render код остается таким же, но добавь индикатор подключения к боту
   if (connectionError) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -187,6 +298,7 @@ const InterviewRoomInternal = () => {
     );
   }
 
+  // Остальной код остается без изменений, но добавь в header информацию о боте:
   return (
     <div className="h-screen bg-background flex flex-col overflow-hidden">
       <header className="bg-background-secondary border-b border-white/10 p-4 flex items-center justify-between">
@@ -198,6 +310,7 @@ const InterviewRoomInternal = () => {
             </p>
           </div>
 
+          {/* Статус подключения к боту */}
           <div className="flex items-center space-x-2">
             <div
               className={`w-2 h-2 rounded-full ${
@@ -239,17 +352,15 @@ const InterviewRoomInternal = () => {
             showChat ? 'w-2/3' : 'w-full'
           } transition-all duration-300 flex`}
         >
-          {/* Видео бота */}
           <div className="w-1/2 h-full">
             <PipecatClientVideo participant="bot" />
           </div>
-          
-          {/* Видео пользователя - теперь используем Pipecat компонент */}
           <div className="w-1/2 h-full">
-            <PipecatClientVideo 
-              participant="local" 
-              fit="cover"
-              mirror={true}
+            <video
+              ref={videoRef}
+              autoPlay
+              muted
+              playsInline
               className="w-full h-full object-cover bg-black"
             />
           </div>
@@ -275,55 +386,32 @@ const InterviewRoomInternal = () => {
             </div>
           </div>
 
-          {/* Заменяем самописные кнопки на Pipecat компоненты */}
           <div className="flex items-center space-x-3">
-            {/* Кнопка камеры через Pipecat */}
-            <PipecatClientCamToggle
-              onCamEnabledChanged={(enabled) => {
-                console.log("Камера:", enabled ? "включена" : "выключена");
-              }}
+            <button
+              onClick={toggleVideo}
+              className={`p-3 rounded-xl transition-all ${
+                isVideoOn
+                  ? 'bg-background-tertiary text-white hover:bg-white/10'
+                  : 'bg-red-600 text-white hover:bg-red-700'
+              }`}
             >
-              {({ disabled, isCamEnabled, onClick }) => (
-                <button
-                  onClick={onClick}
-                  disabled={disabled}
-                  className={`p-3 rounded-xl transition-all ${
-                    isCamEnabled
-                      ? 'bg-background-tertiary text-white hover:bg-white/10'
-                      : 'bg-red-600 text-white hover:bg-red-700'
-                  }`}
-                  title={isCamEnabled ? "Выключить камеру" : "Включить камеру"}
-                >
-                  {isCamEnabled ? (
-                    <Camera className="w-5 h-5" />
-                  ) : (
-                    <VideoOff className="w-5 h-5" />
-                  )}
-                </button>
+              {isVideoOn ? (
+                <Camera className="w-5 h-5" />
+              ) : (
+                <VideoOff className="w-5 h-5" />
               )}
-            </PipecatClientCamToggle>
+            </button>
 
-            {/* Кнопка микрофона через Pipecat */}
-            <PipecatClientMicToggle
-              onMicEnabledChanged={(enabled) => {
-                console.log("Микрофон:", enabled ? "включен" : "выключен");
-              }}
+            <button
+              onClick={toggleAudio}
+              className={`p-3 rounded-xl transition-all ${
+                isAudioOn
+                  ? 'bg-background-tertiary text-white hover:bg-white/10'
+                  : 'bg-red-600 text-white hover:bg-red-700'
+              }`}
             >
-              {({ disabled, isMicEnabled, onClick }) => (
-                <button
-                  onClick={onClick}
-                  disabled={disabled}
-                  className={`p-3 rounded-xl transition-all ${
-                    isMicEnabled
-                      ? 'bg-background-tertiary text-white hover:bg-white/10'
-                      : 'bg-red-600 text-white hover:bg-red-700'
-                  }`}
-                  title={isMicEnabled ? "Выключить микрофон" : "Включить микрофон"}
-                >
-                  {isMicEnabled ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
-                </button>
-              )}
-            </PipecatClientMicToggle>
+              {isAudioOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+            </button>
           </div>
 
           <div className="flex items-center space-x-3">
@@ -358,7 +446,7 @@ const InterviewRoomInternal = () => {
         </div>
       </footer>
 
-      {/* Аудио компонент для воспроизведения звука бота */}
+      {/* Добавь PipecatClientAudio для воспроизведения звука бота */}
       <PipecatClientAudio />
       
       <MediaPermissionHelper
@@ -369,27 +457,13 @@ const InterviewRoomInternal = () => {
   );
 };
 
-// Обновленная конфигурация клиента
 const client = new PipecatClient({
-  transport: new SmallWebRTCTransport(),
-  enableCam: true,  // Включаем камеру по умолчанию
-  enableMic: true,  // Включаем микрофон по умолчанию
+  transport: new SmallWebRTCTransport({
+  }),
+  enableCam: false, // Default camera off
+  enableMic: true, // Default microphone on
   callbacks: {
-    onBotConnected: () => {
-      console.log("🤖 Бот подключился");
-    },
-    onBotDisconnected: () => {
-      console.log("🤖 Бот отключился");
-    },
-    onBotReady: () => {
-      console.log("🤖 Бот готов к работе!");
-    },
-    onError: (error) => {
-      console.error("❌ Ошибка Pipecat:", error);
-    },
-    onTrackStarted: (track, participant) => {
-      console.log(`🎥 Трек запущен:`, track.kind, participant);
-    }
+    // Event handlers
   },
 });
 
