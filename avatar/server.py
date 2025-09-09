@@ -52,7 +52,7 @@ async def root_redirect():
 @app.post("/api/offer")
 async def offer(request: dict, background_tasks: BackgroundTasks):
     pc_id = request.get("pc_id")
-
+    logger.info(f"rofl_answer: {request.get("rofl")}")
     if pc_id and pc_id in pcs_map:
         pipecat_connection = pcs_map[pc_id]
         logger.info(f"Reusing existing connection for pc_id: {pc_id}")

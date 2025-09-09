@@ -33,6 +33,11 @@ from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.transcriptions.language import Language
 from simli import SimliConfig
 from pipecat.services.simli.video import SimliVideoService
+from datetime import datetime
+from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
+from pipecat.services.llm_service import FunctionCallParams
+from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 # Load environment variables
 load_dotenv(override=True)
 
@@ -46,7 +51,18 @@ logger.add(
 # We store functions so objects (e.g. SileroVADAnalyzer) don't get
 # instantiated. The function will be called when the desired transport gets
 # selected.
-
+datetime_function = FunctionSchema(
+    name="get_current_datetime",
+    description="Get the current datetime so you can calculate time left for interview",
+    properties={},
+    required=[]
+)
+tools = ToolsSchema(standard_tools=[datetime_function])
+async def get_current_datetime(params: FunctionCallParams):
+    # Fetch weather data from your API
+    datetime_data = {"datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+    await params.result_callback(datetime_data)
+# Create a tools schema with your functions
 
 
 async def run_bot(webrtc_connection):
@@ -67,23 +83,13 @@ async def run_bot(webrtc_connection):
     )
     # Create the Gemini Multimodal Live LLM service
     system_instruction = f"""
-    Ты — профессиональный HR-интервьюер, девушка, тебя зовут Александра.
-Твоя задача — провести структурированное собеседование, учитывая описание вакансии, краткое резюме кандидата и ограничение по времени.
+Ты — Александра, продвинутый HR-интервьюер.
 
-Правила работы:
+**Задача:** Провести структурированное интервью на **русском языке**, соблюдая этические нормы (без дискриминационных вопросов). Твоя роль — оценить кандидата и подготовить отчет для HR-менеджера, **а не принимать решение о найме**.
 
-1. Проанализируй вакансию: выдели ключевые компетенции и навыки.
-2. Проанализируй резюме: отметь совпадения и пробелы.
-3. Построй план интервью с учётом доступного времени:
-
-   * если времени много — задай больше уточняющих вопросов, кейсов, поведенческих примеров;
-   * если времени мало — задавай только самые критичные вопросы.
-4. Ведёшь интервью пошагово: задаёшь вопрос → получаешь ответ → при необходимости уточняешь.
-5. Обеспечь баланс между техническими и поведенческими вопросами.
-6. По завершении составь краткое заключение: какие компетенции подтверждены, какие под вопросом, итоговая рекомендация («Рекомендовать / Рассмотреть / Не рекомендовать») с обоснованием.
-
-Входные данные:
-Храмов Альберт Марсович
+**Входные данные:**
+* **Вакансия:Frontend Developer, база знаний React, TypeScript, JavaScript, HTML/CSS, описание: Собеседование на позицию Frontend разработчика с опытом работы от 3 лет**
+* **Резюме:Храмов Альберт Марсович
 Мужчина, 19 лет, родился 19 января 2006
 +7 (939) 3473144 — предпочитаемый способ связи
 albert1yandex@gmail.com
@@ -164,14 +170,41 @@ Moscow AI №0 (МТС, 2024) — обсуждение AI-агентов, ген
 •
  ФИЦ (Time Series) 2024 — 4 место
 •
- Норникель: интеллектуальные горизонты 2024 — 5 место
-Вакансия:
-Frontend Developer
-База: React, TypeScript, JavaScript, HTML/CSS
-Описание: Собеседование на позицию Frontend разработчика с опытом работы от 3 лет
-Время: 5 минут
-    """
+ Норникель: интеллектуальные горизонты 2024 — 5 место**
+* **Время (минут):5**
+Текущее время: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
+---
+
+### **План Действий**
+
+**1. Внутренний анализ (перед первым вопросом):**
+* Выдели из вакансии 5-7 ключевых компетенций.
+* Сопоставь их с резюме, определи главные темы для проверки.
+
+**2. Проведение интервью (взаимодействие с кандидатом):**
+* **Структура по времени:** Придерживайся плана: Вступление (~5%), Основные вопросы (~70%), Вопросы кандидата (~15%), Завершение (~10%).
+* **Начало:** Кратко представься и озвучь план беседы.
+* **Диалог:** Задавай по **одному** вопросу за раз. Если ответ неполный — задавай уточняющие вопросы.
+* **Завершение:** Будь нейтрален. Поблагодари, озвучь следующие шаги (например, «Мы свяжемся с вами в течение N дней») и пожелай хорошего дня. Не давай никаких намеков на решение.
+
+**3. Итоговый отчет (для HR-менеджера):**
+* **Оценка по компетенциям:**
+    * `[Компетенция]`: `[Подтверждена / Частично / Не подтверждена]` — `[Краткое обоснование]`
+* **Сильные стороны:** (список 2-3)
+* **Риски / Зоны роста:** (список 1-2)
+* **Рекомендация:** `[Рекомендовать / Рассмотреть / Не рекомендовать]` с четкой аргументацией.
+Пожалуйста, произноси числительные на русском языке, для этого можешь перевести их в письменную форму, например, 3 - "три
+    """
+    context = OpenAILLMContext(
+    messages=[
+        {
+            "role": "system",
+            "content": system_instruction
+        }    
+    ],
+    tools=tools
+)
     llm = GeminiMultimodalLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
         system_instruction=system_instruction,
@@ -183,6 +216,12 @@ Frontend Developer
                 prefix_padding_ms=500,                      # Увеличиваем буфер до речи
                 silence_duration_ms=2000,                   # Увеличиваем время тишины до 2 сек
             ),
+    )
+    context_aggregator = llm.create_context_aggregator(context)
+    llm.register_function(
+    "get_current_datetime",
+    get_current_datetime,
+    cancel_on_interruption=True,  # Cancel if user interrupts (default: True)
     )
     simli = SimliVideoService(
         SimliConfig(
@@ -199,9 +238,11 @@ Frontend Developer
     pipeline = Pipeline(
         [
             pipecat_transport.input(),
+            context_aggregator.user(),
             llm,
             simli,
             pipecat_transport.output(),
+            context_aggregator.assistant()
         ]
     )
 
