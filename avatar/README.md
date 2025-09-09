@@ -1,5 +1,6 @@
 # Как запускать?
 Заполнить .env (пример в .env.example)  
+Установить [uv](https://docs.astral.sh/uv/#installation)  
 Подтянуть зависимости  
 ```bash
 uv sync
